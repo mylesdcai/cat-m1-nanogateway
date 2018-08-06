@@ -8,8 +8,6 @@ if __name__ == '__main__':
         id=config.GATEWAY_ID,
         frequency=config.LORA_FREQUENCY,
         datarate=config.LORA_GW_DR,
-        ssid=config.WIFI_SSID,
-        password=config.WIFI_PASS,
         server=config.SERVER,
         port=config.PORT,
         ntp_server=config.NTP,

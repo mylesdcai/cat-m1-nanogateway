@@ -1,5 +1,7 @@
 """ LoPy LoRaWAN Nano Gateway. Can be used for both EU868 and US915. """
-
+import pycom
+import ssl
+import sys
 import errno
 import machine
 import ubinascii
@@ -10,9 +12,15 @@ import utime
 import _thread
 from micropython import const
 from network import LoRa
-from network import WLAN
+from network import LTE
 from machine import Timer
 
+BLACK = 0x000000
+WHITE = 0xFFFFFF
+RED = 0xFF0000
+GREEN = 0x00FF00
+BLUE = 0x0000FF
+YELLOW = 0xFFFF00
 
 PROTOCOL_VERSION = const(2)
 
@@ -81,7 +89,7 @@ class NanoGateway:
     connecting to the Internet.
     """
 
-    def __init__(self, id, frequency, datarate, ssid, password, server, port, ntp_server='pool.ntp.org', ntp_period=3600):
+    def __init__(self, id, frequency, datarate, server, port, ntp_server='pool.ntp.org', ntp_period=3600):
         self.id = id
         self.server = server
         self.port = port
@@ -89,8 +97,8 @@ class NanoGateway:
         self.frequency = frequency
         self.datarate = datarate
 
-        self.ssid = ssid
-        self.password = password
+        # self.ssid = ssid
+        # self.password = password
 
         self.ntp_server = ntp_server
         self.ntp_period = ntp_period
@@ -110,7 +118,7 @@ class NanoGateway:
         self.pull_alarm = None
         self.uplink_alarm = None
 
-        self.wlan = None
+        self.lte = None
         self.sock = None
         self.udp_stop = False
         self.udp_lock = _thread.allocate_lock()
@@ -127,9 +135,13 @@ class NanoGateway:
 
         self._log('Starting LoRaWAN nano gateway with id: {}', self.id)
 
-        # setup WiFi as a station and connect
-        self.wlan = WLAN(mode=WLAN.STA)
-        self._connect_to_wifi()
+        # # setup WiFi as a station and connect
+        # self.wlan = WLAN(mode=WLAN.STA)
+        # self._connect_to_wifi()
+
+        # setup LTE CATM1 connection
+        self.lte = LTE(carrier = "verizon")
+        self._connect_to_LTE()
 
         # get a time sync
         self._log('Syncing time with {} ...', self.ntp_server)
@@ -199,15 +211,126 @@ class NanoGateway:
         while self.udp_stop:
             utime.sleep_ms(50)
 
-        # disable WLAN
-        self.wlan.disconnect()
-        self.wlan.deinit()
+        # disable LTE
+        self.lte.disconnect()
+        self.lte.dettach()
 
     def _connect_to_wifi(self):
         self.wlan.connect(self.ssid, auth=(None, self.password))
         while not self.wlan.isconnected():
             utime.sleep_ms(50)
         self._log('WiFi connected to: {}', self.ssid)
+
+    def _connect_to_LTE(self):
+        print("reset modem")
+        try:
+            lte.reset()
+        except:
+            print("Exception during reset")
+
+        print("delay 5 secs")
+        time.sleep(5.0)
+
+        if lte.isattached():
+            try:
+                print("LTE was already attached, disconnecting...")
+                if lte.isconnected():
+                    print("disconnect")
+                    lte.disconnect()
+            except:
+                print("Exception during disconnect")
+
+            try:
+                if lte.isattached():
+                    print("detach")
+                    lte.dettach()
+            except:
+                print("Exception during dettach")
+
+            try:
+                print("resetting modem...")
+                lte.reset()
+            except:
+                print("Exception during reset")
+
+            print("delay 5 secs")
+            time.sleep(5.0)
+
+        # enable network registration and location information, unsolicited result code
+        at('AT+CEREG=2')
+
+        # print("full functionality level")
+        at('AT+CFUN=1')
+        time.sleep(1.0)
+
+        # using Hologram SIM
+        at('AT+CGDCONT=1,"IP","hologram"')
+
+        print("attempt to attach cell modem to base station...")
+        # lte.attach()  # do not use attach with custom init for Hologram SIM
+
+        at("ATI")
+        time.sleep(2.0)
+
+        i = 0
+        while lte.isattached() == False:
+            # get EPS Network Registration Status:
+            # +CEREG: <stat>[,[<tac>],[<ci>],[<AcT>]]
+            # <tac> values:
+            # 0 - not registered
+            # 1 - registered, home network
+            # 2 - not registered, but searching...
+            # 3 - registration denied
+            # 4 - unknown (out of E-UTRAN coverage)
+            # 5 - registered, roaming
+            r = at('AT+CEREG?')
+            try:
+                r0 = r[0]  # +CREG: 2,<tac>
+                r0x = r0.split(',')     # ['+CREG: 2',<tac>]
+                tac = int(r0x[1])       # 0..5
+                print("tac={}".format(tac))
+            except IndexError:
+                tac = 0
+                print("Index Error!!!")
+
+            # get signal strength
+            # +CSQ: <rssi>,<ber>
+            # <rssi>: 0..31, 99-unknown
+            r = at('AT+CSQ')
+
+            # extended error report
+            # r = at('AT+CEER')
+
+            if lte.isattached():
+               print("Modem attached (isattached() function worked)!!!")
+               break
+
+            if (tac==1) or (tac==5):
+               print("Modem attached!!!")
+               break
+
+            i = i + 5
+            print("not attached: {} secs".format(i))
+
+            if (tac != 0):
+                blink(BLUE, tac)
+            else:
+                blink(RED, 5)
+
+            time.sleep(2)
+
+        at('AT+CEREG?')
+        print("connect: start a data session and obtain an IP address")
+        lte.connect(cid=3)
+        i = 0
+        while not lte.isconnected():
+            i = i + 1
+            print("not connected: {}".format(i))
+            blink(YELLOW, 1)
+            time.sleep(1.0)
+
+        print("connected!!!")
+        pycom.rgbled(BLUE)
 
     def _dr_to_sf(self, dr):
         sf = dr[2:4]
@@ -379,7 +502,7 @@ class NanoGateway:
                                 ubinascii.a2b_base64(tx_pk["txpk"]["data"]),
                                 tx_pk["txpk"]["tmst"] - 50, tx_pk["txpk"]["datr"],
                                 int(tx_pk["txpk"]["freq"] * 1000) * 1000
-                            ), 
+                            ),
                             us=t_us
                         )
                     else:
@@ -412,3 +535,10 @@ class NanoGateway:
             utime.ticks_ms() / 1000,
             str(message).format(*args)
             ))
+
+    def at(cmd):
+        print("modem command: {}".format(cmd))
+        r = lte.send_at_cmd(cmd).split('\r\n')
+        r = list(filter(None, r))
+        print("response={}".format(r))
+        return r
