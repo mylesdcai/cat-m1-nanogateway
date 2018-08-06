@@ -133,6 +133,8 @@ class NanoGateway:
         Starts the LoRaWAN nano gateway.
         """
 
+        pycom.heartbeat(False)
+
         self._log('Starting LoRaWAN nano gateway with id: {}', self.id)
 
         # # setup WiFi as a station and connect
@@ -224,56 +226,56 @@ class NanoGateway:
     def _connect_to_LTE(self):
         print("reset modem")
         try:
-            lte.reset()
+            self.lte.reset()
         except:
             print("Exception during reset")
 
         print("delay 5 secs")
-        time.sleep(5.0)
+        utime.sleep(5.0)
 
-        if lte.isattached():
+        if self.lte.isattached():
             try:
                 print("LTE was already attached, disconnecting...")
-                if lte.isconnected():
+                if self.lte.isconnected():
                     print("disconnect")
-                    lte.disconnect()
+                    self.lte.disconnect()
             except:
                 print("Exception during disconnect")
 
             try:
-                if lte.isattached():
+                if self.lte.isattached():
                     print("detach")
-                    lte.dettach()
+                    self.lte.dettach()
             except:
                 print("Exception during dettach")
 
             try:
                 print("resetting modem...")
-                lte.reset()
+                self.lte.reset()
             except:
                 print("Exception during reset")
 
             print("delay 5 secs")
-            time.sleep(5.0)
+            utime.sleep(5.0)
 
         # enable network registration and location information, unsolicited result code
-        at('AT+CEREG=2')
+        self.at('AT+CEREG=2')
 
         # print("full functionality level")
-        at('AT+CFUN=1')
-        time.sleep(1.0)
+        self.at('AT+CFUN=1')
+        utime.sleep(1.0)
 
         # using Hologram SIM
-        at('AT+CGDCONT=1,"IP","hologram"')
+        self.at('AT+CGDCONT=1,"IP","hologram"')
 
         print("attempt to attach cell modem to base station...")
         # lte.attach()  # do not use attach with custom init for Hologram SIM
 
-        at("ATI")
-        time.sleep(2.0)
+        self.at("ATI")
+        utime.sleep(2.0)
 
         i = 0
-        while lte.isattached() == False:
+        while self.lte.isattached() == False:
             # get EPS Network Registration Status:
             # +CEREG: <stat>[,[<tac>],[<ci>],[<AcT>]]
             # <tac> values:
@@ -283,7 +285,7 @@ class NanoGateway:
             # 3 - registration denied
             # 4 - unknown (out of E-UTRAN coverage)
             # 5 - registered, roaming
-            r = at('AT+CEREG?')
+            r = self.at('AT+CEREG?')
             try:
                 r0 = r[0]  # +CREG: 2,<tac>
                 r0x = r0.split(',')     # ['+CREG: 2',<tac>]
@@ -296,12 +298,12 @@ class NanoGateway:
             # get signal strength
             # +CSQ: <rssi>,<ber>
             # <rssi>: 0..31, 99-unknown
-            r = at('AT+CSQ')
+            r = self.at('AT+CSQ')
 
             # extended error report
             # r = at('AT+CEER')
 
-            if lte.isattached():
+            if self.lte.isattached():
                print("Modem attached (isattached() function worked)!!!")
                break
 
@@ -313,24 +315,24 @@ class NanoGateway:
             print("not attached: {} secs".format(i))
 
             if (tac != 0):
-                blink(BLUE, tac)
+                self.blink(BLUE, tac)
             else:
-                blink(RED, 5)
+                self.blink(RED, 5)
 
-            time.sleep(2)
+            utime.sleep(2)
 
-        at('AT+CEREG?')
+        self.at('AT+CEREG?')
         print("connect: start a data session and obtain an IP address")
-        lte.connect(cid=3)
+        self.lte.connect(cid=3)
         i = 0
-        while not lte.isconnected():
+        while not self.lte.isconnected():
             i = i + 1
             print("not connected: {}".format(i))
-            blink(YELLOW, 1)
-            time.sleep(1.0)
+            self.blink(YELLOW, 1)
+            utime.sleep(1.0)
 
         print("connected!!!")
-        pycom.rgbled(BLUE)
+        pycom.rgbled(GREEN)
 
     def _dr_to_sf(self, dr):
         sf = dr[2:4]
@@ -536,9 +538,16 @@ class NanoGateway:
             str(message).format(*args)
             ))
 
-    def at(cmd):
+    def at(self, cmd):
         print("modem command: {}".format(cmd))
-        r = lte.send_at_cmd(cmd).split('\r\n')
+        r = self.lte.send_at_cmd(cmd).split('\r\n')
         r = list(filter(None, r))
         print("response={}".format(r))
         return r
+
+    def blink(self, rgb, n):
+        for i in range(n):
+            pycom.rgbled(rgb)
+            utime.sleep(0.25)
+            pycom.rgbled(BLACK)
+            utime.sleep(0.1)
